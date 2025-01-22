@@ -34,7 +34,7 @@ pid_t log_oracle_process_name() {
     pid_t pid = -1;
 
     // Execute the command to get Oracle process names
-    fp = popen("ps -eo comm,pid | grep -E '^ora_|^oracle$'", "r");
+    fp = popen("ps -eo comm,pid | grep -E '^ora_d|^oracle$'", "r");
     if (fp == NULL) {
         fprintf(log_file, "Failed to run command\n");
         fflush(log_file);

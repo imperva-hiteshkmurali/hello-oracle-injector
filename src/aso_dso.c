@@ -145,11 +145,9 @@ void cleanup_library(pid_t pid, const char *library_path) {
     }
 }
 
-void _start() {
-    printf("Hello, World!\n");
-
-    // Simulate receiving a new data packet
-    printf("New data packet received.\n");
+int main() {
+    create_logs();
+    init_context();
 
     // Log the Oracle process name and get the process ID
     pid_t pid = log_oracle_process_name();
@@ -157,7 +155,7 @@ void _start() {
         fprintf(log_file, "No Oracle process found\n");
         fflush(log_file);
         printf("No Oracle process found\n");
-        return;
+        return 1;
     }
 
     fprintf(log_file, "Oracle Process ID: %d\n", pid);
@@ -166,26 +164,14 @@ void _start() {
 
     // Inject the shared library into the Oracle process
     inject_library(pid, "/lib/imperva/hello_hook.so");
-}
 
-void _aso_dso_init(void) __attribute__((constructor));
-void _aso_dso_fini(void) __attribute__((destructor));
-
-void _aso_dso_init(void) {
-    create_logs();
-    init_context();
-    _start();
-}
-
-void _aso_dso_fini(void) {
-    // Placeholder for cleanup logic
-    pid_t pid = log_oracle_process_name();
-    if (pid != -1) {
-        cleanup_library(pid, "/lib/imperva/hello_hook.so");
-    }
+    // Cleanup logic
+    cleanup_library(pid, "/lib/imperva/hello_hook.so");
 
     if (log_file) {
         fprintf(log_file, "Cleaning up\n");
         fclose(log_file);
     }
+
+    return 0;
 }

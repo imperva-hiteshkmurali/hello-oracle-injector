@@ -9,10 +9,10 @@ SRC = aso_dso.c
 all: $(TARGET)
 
 $(TARGET): $(SRC)
-    @mkdir -p $(TARGET_DIR)
-    $(CC) $(CFLAGS) $(SRC) -o $(TARGET) $(LDFLAGS)
-    @echo "Shared object created at $(TARGET)"
+	@mkdir -p $(TARGET_DIR)
+	$(CC) $(CFLAGS) $(SRC) -o $(TARGET) $(LDFLAGS)
+	@echo "Shared object created at $(TARGET)"
 
 clean:
-    rm -f $(TARGET)
-    @echo "Cleaned up $(TARGET)"
+	rm -f $(TARGET)
+	@echo "Cleaned up $(TARGET)"

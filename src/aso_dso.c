@@ -28,26 +28,43 @@ void init_context() {
     fflush(log_file);
 }
 
-void log_oracle_process_name() {
+pid_t log_oracle_process_name() {
     FILE *fp;
     char path[1035];
+    pid_t pid = -1;
 
     // Execute the command to get Oracle process names
     fp = popen("ps -eo comm,pid | grep -E '^ora_|^oracle$'", "r");
     if (fp == NULL) {
         fprintf(log_file, "Failed to run command\n");
         fflush(log_file);
-        exit(1);
+        return -1;
     }
 
     // Read the output and log it
     while (fgets(path, sizeof(path) - 1, fp) != NULL) {
         fprintf(log_file, "Oracle Process: %s", path);
         fflush(log_file);
+
+        // Extract the PID from the output
+        char *token = strtok(path, " ");
+        token = strtok(NULL, " ");
+        if (token != NULL) {
+            pid = (pid_t)strtol(token, NULL, 10);
+            break; // Return the first Oracle process ID found
+        }
     }
 
     // Close the file pointer
     pclose(fp);
+
+    return pid;
+}
+
+void set_breakpoint(pid_t pid, void *addr) {
+    long data = ptrace(PTRACE_PEEKTEXT, pid, addr, NULL);
+    long trap = (data & ~0xff) | 0xcc; // 0xcc is the INT3 instruction
+    ptrace(PTRACE_POKETEXT, pid, addr, trap);
 }
 
 void inject_library(pid_t pid, const char *library_path) {
@@ -76,9 +93,49 @@ void inject_library(pid_t pid, const char *library_path) {
         return;
     }
 
-    // Set breakpoints at nsbsend and nsbrecv (this is a simplified example)
-    // In a real scenario, you would need to find the addresses of these functions
-    // and use ptrace to set breakpoints at those addresses.
+    // Set breakpoints at nsbsend and nsbrecv (example addresses)
+    void *nsbsend_addr = dlsym(handle, "nsbsend");
+    void *nsbrecv_addr = dlsym(handle, "nsbrecv");
+    if (nsbsend_addr) {
+        set_breakpoint(pid, nsbsend_addr);
+    }
+    if (nsbrecv_addr) {
+        set_breakpoint(pid, nsbrecv_addr);
+    }
+
+    // Detach from the process
+    if (ptrace(PTRACE_DETACH, pid, NULL, NULL) == -1) {
+        perror("ptrace detach");
+        fprintf(log_file, "ptrace detach failed\n");
+        fflush(log_file);
+    }
+}
+
+void cleanup_library(pid_t pid, const char *library_path) {
+    char remote_dlclose_cmd[256];
+    snprintf(remote_dlclose_cmd, sizeof(remote_dlclose_cmd),
+             "dlclose(dlopen(\"%s\", RTLD_LAZY))", library_path);
+
+    // Attach to the process
+    if (ptrace(PTRACE_ATTACH, pid, NULL, NULL) == -1) {
+        perror("ptrace attach");
+        fprintf(log_file, "ptrace attach failed\n");
+        fflush(log_file);
+        return;
+    }
+
+    // Wait for the process to stop
+    waitpid(pid, NULL, 0);
+
+    // Close the library
+    void *handle = dlopen(library_path, RTLD_LAZY);
+    if (handle) {
+        dlclose(handle);
+    } else {
+        fprintf(stderr, "Error opening library for cleanup: %s\n", dlerror());
+        fprintf(log_file, "Error opening library for cleanup: %s\n", dlerror());
+        fflush(log_file);
+    }
 
     // Detach from the process
     if (ptrace(PTRACE_DETACH, pid, NULL, NULL) == -1) {
@@ -94,35 +151,21 @@ void _start() {
     // Simulate receiving a new data packet
     printf("New data packet received.\n");
 
-    // Log the Oracle process name
-    log_oracle_process_name();
-
-    // Identify the Oracle process ID (for simplicity, we assume the first one)
-    FILE *fp = popen("pgrep -f '^ora_|^oracle$'", "r");
-    if (fp == NULL) {
-        fprintf(log_file, "Failed to run command\n");
-        fflush(log_file);
-        printf("Failed to run command\n");
-        exit(1);
-    }
-
-    char pid_str[10];
-    if (fgets(pid_str, sizeof(pid_str) - 1, fp) != NULL) {
-        pid_t pid = (pid_t)strtol(pid_str, NULL, 10);
-        fprintf(log_file, "Oracle Process ID: %d\n", pid);
-        fflush(log_file);
-        printf("Oracle Process ID: %d\n", pid);
-
-        // Inject the shared library into the Oracle process
-        inject_library(pid, "/path/to/your/library.so");
-    } else {
+    // Log the Oracle process name and get the process ID
+    pid_t pid = log_oracle_process_name();
+    if (pid == -1) {
         fprintf(log_file, "No Oracle process found\n");
         fflush(log_file);
         printf("No Oracle process found\n");
+        return;
     }
 
-    // Close the file pointer
-    pclose(fp);
+    fprintf(log_file, "Oracle Process ID: %d\n", pid);
+    fflush(log_file);
+    printf("Oracle Process ID: %d\n", pid);
+
+    // Inject the shared library into the Oracle process
+    inject_library(pid, "/lib/imperva/hello_hook.so");
 }
 
 void _aso_dso_init(void) __attribute__((constructor));
@@ -136,6 +179,11 @@ void _aso_dso_init(void) {
 
 void _aso_dso_fini(void) {
     // Placeholder for cleanup logic
+    pid_t pid = log_oracle_process_name();
+    if (pid != -1) {
+        cleanup_library(pid, "/lib/imperva/hello_hook.so");
+    }
+
     if (log_file) {
         fprintf(log_file, "Cleaning up\n");
         fclose(log_file);
